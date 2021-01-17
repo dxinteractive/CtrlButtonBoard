@@ -2,7 +2,7 @@
  * Main program file for CtrlButtonBoard 
  * external controller for the Ctrl pedal
  * (CV generator / metronome / tuner).
- * Copyright (c) 2017 Damien Clarke
+ * Copyright (c) 2017-2021 Damien Clarke
  * damienclarke.me | github.com/dxinteractive/CtrlButtonBoard
  *  _____ _    
  * /   | |_)|  
@@ -10,9 +10,6 @@
  *
  * BUTTON BOARD
  */
-
-// TODO
-// rewire switches
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -29,37 +26,39 @@
 #include <ResponsiveAnalogRead.h>
 
 // pins
-const int PIN_3WAYSWITCH_UP = 0;
-const int PIN_MOMSWITCH = 1;
-const int PIN_3WAYSWITCH_DOWN = 1;
-const int PIN_TLC5940_0 = 3;
-const int PIN_TLC5940_1 = 4;
-const int PIN_TLC5940_2 = 5;
-const int PIN_TLC5940_3 = 6;
-const int PIN_TLC5940_4 = 7;
-const int PIN_CS = 8;
-const int PIN_RST = 9;
-const int PIN_DC = 10;
-const int PIN_SCLK = 11;
-const int PIN_SID = 12;
-// const int PIN_LED = 13;
-const int PIN_ANALOG_7 = A0;
-const int PIN_ANALOG_6 = A1;
-const int PIN_ANALOG_5 = A2;
-const int PIN_ANALOG_4 = A3;
-// const int PIN_I2C_SDA = 18;
-// const int PIN_I2C_SCL = 19;
-const int PIN_ANALOG_3 = A6;
-const int PIN_ANALOG_2 = A7;
-const int PIN_ANALOG_1 = A8;
-const int PIN_ANALOG_0 = A9;
-const int PIN_BUTTONSET_0 = A10;
-const int PIN_BUTTONSET_1 = A11;
+#define PIN_3WAYSWITCH_UP   0
+#define PIN_MOMSWITCH       1
+#define PIN_3WAYSWITCH_DOWN 2
+#define PIN_TLC5940_0       3
+#define PIN_TLC5940_1       4
+#define PIN_TLC5940_2       5
+#define PIN_TLC5940_3       6
+#define PIN_TLC5940_4       7
+#define PIN_CS              8
+#define PIN_RST             9
+#define PIN_DC              10
+#define PIN_SCLK            11
+#define PIN_SID             12
+#define PIN_LED             13
+#define PIN_ANALOG_7        A0
+#define PIN_ANALOG_6        A1
+#define PIN_ANALOG_5        A2
+#define PIN_ANALOG_4        A3
+// #define PIN_I2C_SDA      18
+// #define PIN_I2C_SCL      19
+#define PIN_ANALOG_3        A6
+#define PIN_ANALOG_2        A7
+#define PIN_ANALOG_1        A8
+#define PIN_ANALOG_0        A9
+#define PIN_BUTTONSET_0     A10
+#define PIN_BUTTONSET_1     A11
 
-// const int PIN_LED_DOWN = 20;
-// const int PIN_LED_RIGHT = 21;
-// const int PIN_LED_LEFT = 22;
-// const int PIN_LED_UP = 23;
+#define BB_I2C_CHANNEL      8
+#define WIRE_RECEIVE_MAX    10
+
+#define SET_0LED            7
+#define SET_LED_UPPER       8
+#define SET_LED_LOWER       9
 
 Adafruit_SSD1306 screen(PIN_SID, PIN_SCLK, PIN_DC, PIN_RST, PIN_CS);
 
@@ -72,19 +71,123 @@ ResponsiveAnalogRead analog5(PIN_ANALOG_5, true);
 ResponsiveAnalogRead analog6(PIN_ANALOG_6, true);
 ResponsiveAnalogRead analog7(PIN_ANALOG_7, true);
 
-const int BUTTONS_DEBOUNCE = 20;
+const int BUTTONS_DEBOUNCE = 1;
 const int BUTTONS_RESOLUTION = 960;
-const int BUTTONS_TOTAL = 8;
-const int BUTTONS_VALUES[BUTTONS_TOTAL] = {0, 130, 270, 450, 550, 680, 800, 870};
-AnalogMultiButton buttonSet0(PIN_BUTTONSET_0, BUTTONS_TOTAL, BUTTONS_VALUES, BUTTONS_DEBOUNCE, BUTTONS_RESOLUTION);
-AnalogMultiButton buttonSet1(PIN_BUTTONSET_1, BUTTONS_TOTAL, BUTTONS_VALUES, BUTTONS_DEBOUNCE, BUTTONS_RESOLUTION);
+const int BUTTONS_PER_SET = 8;
+const int BUTTONS_VALUES[BUTTONS_PER_SET] = {0, 130, 270, 450, 550, 680, 800, 870};
+
+const int BUTTONS_TOTAL = 16;
+const int BUTTONS_NUMBERS[BUTTONS_TOTAL] = {0,0,1,1,2,2,3,3,7,7,6,6,5,5,4,4};
+const int BUTTONS_NUMBERS_SETS[BUTTONS_TOTAL] = {0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0};
+
+AnalogMultiButton buttonSet0(PIN_BUTTONSET_0, BUTTONS_PER_SET, BUTTONS_VALUES, BUTTONS_DEBOUNCE, BUTTONS_RESOLUTION);
+AnalogMultiButton buttonSet1(PIN_BUTTONSET_1, BUTTONS_PER_SET, BUTTONS_VALUES, BUTTONS_DEBOUNCE, BUTTONS_RESOLUTION);
+
+//
+// LEDs
+//
+
+void setLed(int led, int brightness) {
+  if(led == 16) {
+    analogWrite(PIN_LED, brightness);
+    return;
+  }
+  int tlcLed = led < 8 ? 7 - led : 15 - led;
+  Tlc.set(tlcLed, brightness * 2);
+  Tlc.update();
+}
+
+//
+// Wire send
+//
+
+// int wireSendMemory[SEND_TOTAL] = {};
+
+// void wireSend(int id, int value) {
+//   if(value == wireSendMemory[id]) return;
+//   Serial.print(id);
+//   Serial.print(':');
+//   Serial.println(value);
+//   wireSendMemory[id] = value;
+// }
+
+//
+// Wire response
+//
+
+void wireReceive(const char * data) {
+  int target = data[0] - '0';
+  int subtarget = data[1] - '0';
+
+  const char * valueString = data + 3;
+
+  switch(target) {
+    case SET_LED_UPPER:
+      if(subtarget == 8) {
+        subtarget = 16;
+      }
+      setLed(subtarget, atoi(valueString));
+      break;
+
+    case SET_LED_LOWER:
+      setLed(subtarget + 8, atoi(valueString));
+      break;
+
+    default:
+      break;
+  }
+}
+
+void wireReceiveByte(const byte inByte) {
+  static char inputLine[WIRE_RECEIVE_MAX];
+  static unsigned int inputPos = 0;
+
+  switch(inByte) {
+    case 0:
+    case '\n':
+      inputLine[inputPos] = 0;
+      wireReceive(inputLine);
+      inputPos = 0;
+      break;
+
+    case '\r':
+      break;
+
+    default:
+      if(inputPos < (WIRE_RECEIVE_MAX - 1)) {
+        inputLine[inputPos++] = inByte;
+      }
+      break;
+  }
+}
+
+void receiveWireEvent(int howMany) {
+  while(Wire.available() > 0) {
+    wireReceiveByte(Wire.read());
+  }
+}
+
+void requestWireEvent() {
+  Wire.write("hello ");
+}
+
+//
+// Setup
+//
 
 void setup() {
-  // Wire.begin();
-  Serial.begin(9600);
+  Wire.begin(BB_I2C_CHANNEL);
+  Wire.onReceive(receiveWireEvent);
+  Wire.onRequest(requestWireEvent);
 
   // leds
   Tlc.init();
+  Tlc.clear();
+  Tlc.update();
+
+  // LEDs
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, LOW);
 
   // screen
   screen.begin(SSD1306_SWITCHCAPVCC);
@@ -92,154 +195,84 @@ void setup() {
   screen.setTextColor(WHITE);
   screen.setTextSize(2);
   screen.println(":) Hello");
-  // screen.println("RRRRRRRRRR");
-  // screen.println("RRRRRRRRRR");
-  // screen.println("RRRRRRRRRR");
   screen.display();
 
   // switches
-  // pinMode(PIN_MOMSWITCH, INPUT_PULLUP);
-  // pinMode(PIN_3WAYSWITCH_UP, INPUT_PULLUP);
-  // pinMode(PIN_3WAYSWITCH_DOWN, INPUT_PULLUP);
-
-  // analog
-  // analog0.setSnapMultiplier(0.001);
-  // analog1.setSnapMultiplier(0.001);
-  // analogExp.setSnapMultiplier(0.001);
+  pinMode(PIN_MOMSWITCH, INPUT_PULLUP);
+  pinMode(PIN_3WAYSWITCH_UP, INPUT_PULLUP);
+  pinMode(PIN_3WAYSWITCH_DOWN, INPUT_PULLUP);
 }
 
 int led = 0;
+int activeButton = -1;
 
-void loop()
-{
-  Serial.println(":) ?");
+unsigned long time;
+unsigned long prevTime;
+unsigned long ticks;
+
+void loop() {
+  time = millis();
+  if(time == prevTime) return;
+
+  // main loop once per 1ms = 1000Hz
+  prevTime = time;
+  ticks++;
+
+  // once per 8ms = ~125fps
+  if(ticks % 8 == 0) {
+
+  }
+
   screen.clearDisplay();
   screen.setCursor(0,0);
   screen.println(":) ?");
-  screen.println(millis());
-  screen.display();
-  // Serial.println(digitalRead(PIN_MOMSWITCH));
-  // Serial.println(digitalRead(PIN_3WAYSWITCH_UP));
-  // Serial.println(digitalRead(PIN_3WAYSWITCH_DOWN));
+  screen.setTextSize(1);
 
-  Tlc.clear();
-  Tlc.set(led, 0);
-  led++;
-  if(led > 15) {
-    led = 0;
-  }
-  Tlc.set(led, 700);
-  Tlc.update();
+  screen.println(ticks);
 
-  // analog0.update();
-  // analog1.update();
-  // analog2.update();
-  // analog3.update();
-  // analog4.update();
-  // analog5.update();
-  // analog6.update();
-  // analog7.update();
+  screen.print(digitalRead(PIN_MOMSWITCH) == LOW);
+  screen.print(digitalRead(PIN_3WAYSWITCH_UP) == LOW);
+  screen.println(digitalRead(PIN_3WAYSWITCH_DOWN) == LOW);
 
-  // Serial.println("Analog 0");
-  // Serial.println(analog0.getValue());
-  // Serial.println("Analog 1");
-  // Serial.println(analog1.getValue());
-  // Serial.println("Analog 2");
-  // Serial.println(analog2.getValue());
-  // Serial.println("Analog 3");
-  // Serial.println(analog3.getValue());
-  // Serial.println("Analog 4");
-  // Serial.println(analog4.getValue());
-  // Serial.println("Analog 5");
-  // Serial.println(analog5.getValue());
-  // Serial.println("Analog 6");
-  // Serial.println(analog6.getValue());
-  // Serial.println("Analog 7");
-  // Serial.println(analog7.getValue());
+  analog0.update();
+  analog1.update();
+  analog2.update();
+  analog3.update();
+  analog4.update();
+  analog5.update();
+  analog6.update();
+  analog7.update();
 
+  // screen.print(analog0.getValue());
+  // screen.print(analog1.getValue());
+  // screen.print(analog2.getValue());
+  // screen.print(analog3.getValue());
+  // screen.print(analog4.getValue());
+  // screen.print(analog5.getValue());
+  // screen.print(analog6.getValue());
+  // screen.println(analog7.getValue());
+
+  analogRead(PIN_BUTTONSET_0);
   buttonSet0.update();
+
+  analogRead(PIN_BUTTONSET_1);
   buttonSet1.update();
 
-  if(buttonSet0.isPressed(0)) {
-    Serial.println("0.0");
-  }
-   if(buttonSet0.isPressed(1)) {
-    Serial.println("0.1");
-  }
-   if(buttonSet0.isPressed(2)) {
-    Serial.println("0.2");
-  }
-   if(buttonSet0.isPressed(3)) {
-    Serial.println("0.3");
-  }
-   if(buttonSet0.isPressed(4)) {
-    Serial.println("0.4");
-  }
-   if(buttonSet0.isPressed(5)) {
-    Serial.println("0.5");
-  }
-   if(buttonSet0.isPressed(6)) {
-    Serial.println("0.6");
-  }
-   if(buttonSet0.isPressed(7)) {
-    Serial.println("0.7");
-  }
-  if(buttonSet1.isPressed(0)) {
-    Serial.println("1.0");
-  }
-   if(buttonSet1.isPressed(1)) {
-    Serial.println("1.1");
-  }
-   if(buttonSet1.isPressed(2)) {
-    Serial.println("1.2");
-  }
-   if(buttonSet1.isPressed(3)) {
-    Serial.println("1.3");
-  }
-   if(buttonSet1.isPressed(4)) {
-    Serial.println("1.4");
-  }
-   if(buttonSet1.isPressed(5)) {
-    Serial.println("1.5");
-  }
-   if(buttonSet1.isPressed(6)) {
-    Serial.println("1.6");
-  }
-   if(buttonSet1.isPressed(7)) {
-    Serial.println("1.7");
+  activeButton = -1;
+  for(int i = 0; i < BUTTONS_TOTAL; i++) {
+    if(BUTTONS_NUMBERS_SETS[i]
+        ? buttonSet1.isPressed(BUTTONS_NUMBERS[i])
+        : buttonSet0.isPressed(BUTTONS_NUMBERS[i])
+    ) {
+      activeButton = i;
+      break;
+    }
   }
 
+  screen.print("activeButton: ");
+  screen.println(activeButton);
+
+  screen.display();
   delay(10);
 
 }
-
-// void loop() {
-
-//   // analog
-//   // analog0.update();
-//   // analog1.update();
-//   // analogExp.update();
-
-//   // int analogValue = 1024 - analog0.getValue();
-
-//   // Serial.println();
-//   // Serial.println(analog1.getValue());
-//   // Serial.println(analogExp.getValue());
-
-//   // // button
-//   // buttons.update();
-//   // if(buttons.isPressed(BUTTON_UP)) {
-//   //   digitalWrite(PIN_RELAY_0, HIGH);
-//   //   digitalWrite(PIN_RELAY_1, HIGH);
-//   //   digitalWrite(PIN_RELAY_2, HIGH);
-//   //   digitalWrite(PIN_RELAY_3, HIGH);
-//   //   digitalWrite(PIN_RELAY_4, HIGH);
-//   // } else {
-//   //   digitalWrite(PIN_RELAY_0, LOW);
-//   //   digitalWrite(PIN_RELAY_1, LOW);
-//   //   digitalWrite(PIN_RELAY_2, LOW);
-//   //   digitalWrite(PIN_RELAY_3, LOW);
-//   //   digitalWrite(PIN_RELAY_4, LOW);
-//   // }
-//   delay(1);
-// }
